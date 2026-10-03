@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "task-list",
+  "description": "An opt-in, persistent task checklist pane for Claude Code.",
+  "owner": {
+    "name": "Reece Holmdahl",
+    "url": "https://github.com/reecelikesramen"
+  },
+  "plugins": [
+    {
+      "name": "task-list",
+      "description": "Opt-in persistent task checklist: the agent asks to use it, the user approves, checks items off and alone can clear or disable it.",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}

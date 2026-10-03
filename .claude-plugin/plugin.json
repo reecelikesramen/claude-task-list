@@ -1,0 +1,27 @@
+{
+  "name": "task-list",
+  "version": "0.1.0",
+  "description": "Opt-in persistent task checklist: the agent asks to use it, the user approves, checks items off and alone can clear or disable it.",
+  "author": {
+    "name": "Reece Holmdahl",
+    "url": "https://github.com/reecelikesramen"
+  },
+  "homepage": "https://github.com/reecelikesramen/claude-task-list",
+  "repository": "https://github.com/reecelikesramen/claude-task-list",
+  "license": "MIT",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "paneWidth": {
+      "type": "number",
+      "title": "Pane width",
+      "description": "Columns the task pane asks for when docked beside the transcript. 0 leaves the width to Claude Code; a width you drag the pane to wins.",
+      "default": 0
+    },
+    "maxCompleted": {
+      "type": "number",
+      "title": "Completed tasks shown",
+      "description": "How many of the most recently completed tasks the pane lists under the open ones. 0 hides completed tasks.",
+      "default": 5
+    }
+  }
+}
