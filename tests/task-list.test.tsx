@@ -200,11 +200,11 @@ test('the pane checks a task off and tells the agent', async ($, on) => {
   await ui.press({ key: 'task:t1' })
 
   expect((await ui.find({ key: 'task:t1' }))?.props.label).toBe('[x]')
-  expect(submitted).toEqual(['User checked off task t1: "one". 1 task(s) remain.'])
+  expect(submitted).toEqual(['I checked off task t1: "one". 1 task(s) remain.'])
 
   await ui.press({ key: 'task:t1' })
   expect(submitted[1]).toBe(
-    'User unchecked task t1: "one", which they had marked complete. It is open again. 2 task(s) remain.',
+    'I unchecked task t1: "one", which I had marked complete. It is open again. 2 task(s) remain.',
   )
   await ui.unmount()
 })
@@ -262,7 +262,7 @@ test('unchecking what the agent completed tells the agent, and the list says who
   const listed = await $.tool.call({ tool: UPDATE, action: 'list' })
 
   expect(submitted).toEqual([
-    'User unchecked task t1: "one", which you had marked complete. It is open again. 1 task(s) remain.',
+    'I unchecked task t1: "one", which you had marked complete. It is open again. 1 task(s) remain.',
   ])
   expect(listed.result).toBe('t1 [ ] one (reopened by user)')
 })
@@ -402,10 +402,10 @@ test('the user deletes a task from the pane or by command, and the agent is told
   await clock.advance(1)
 
   expect(submitted).toEqual([
-    'User deleted task t1: "one". 2 task(s) remain.',
-    'User deleted task t2: "two". 1 task(s) remain.',
-    'User checked off task t3: "three". All tasks complete.',
-    'User unchecked task t3: "three", which they had marked complete. It is open again. 1 task(s) remain.',
+    'I deleted task t1: "one". 2 task(s) remain.',
+    'I deleted task t2: "two". 1 task(s) remain.',
+    'I checked off task t3: "three". All tasks complete.',
+    'I unchecked task t3: "three", which I had marked complete. It is open again. 1 task(s) remain.',
   ])
   expect((await $.tool.call({ tool: UPDATE, action: 'list' })).result).toBe('t3 [ ] three (reopened by user)')
 })
@@ -428,7 +428,7 @@ test('mid-turn, what the user did rides on the next tool result, else on the tur
   await tasklist($, 'remove t2')
   expect(submitted).toEqual([])
   await $.turn.complete({ turnId: 'turn_1', reason: 'answer', answer: 'done', durationMs: 1, isAborted: false })
-  expect(submitted).toEqual(['User deleted task t2: "two". All tasks complete.'])
+  expect(submitted).toEqual(['I deleted task t2: "two". All tasks complete.'])
 
   await tasklist($, 'uncheck t1')
   await clock.advance(1)
@@ -443,9 +443,9 @@ test('a notice draws as one dim line in the transcript', async ($, on) => {
     surface: 'terminal',
     component: 'UserMessage',
     props: {
-      text: 'User unchecked task t7: "Ship it", which you had marked complete. It is open again. 2 task(s) remain.',
+      text: 'The task-list plugin sent a message:\nUser unchecked task t7: "Ship it", which you had marked complete. It is open again. 2 task(s) remain.\n\nThis is how Claude Code surfaces a prompt.',
       origin: { kind: 'plugin', name: 'task-list' },
-      isExpanded: false,
+      isExpanded: true,
     },
   } as const
 
@@ -623,4 +623,17 @@ test('/tasklist keys lists the bindings; keys install adds the missing and keeps
   expect(await focused.find({ type: 'Text', text: '(↑↓ move · enter/space press)' })).toBeDefined()
   expect(await focused.find({ type: 'Text', text: '(esc/ctrl+x f to unfocus · ctrl+x t to hide)' })).toBeDefined()
   await focused.unmount()
+})
+
+test('add with before inserts a step where it belongs in the order', async ($, on) => {
+  world(on, 'Allow')
+  await start($)
+  await tasklist($, 'on')
+  await $.tool.call({ tool: UPDATE, action: 'add', text: 'migrate' })
+  await $.tool.call({ tool: UPDATE, action: 'add', text: 'deploy' })
+
+  const added = await $.tool.call({ tool: UPDATE, action: 'add', text: 'snapshot', before: 't2' })
+  expect(added.result).toBe('Added t3 before t2: snapshot')
+  expect((await $.tool.call({ tool: UPDATE, action: 'list' })).result).toBe('t1 [ ] migrate\nt3 [ ] snapshot\nt2 [ ] deploy')
+  expect(String((await $.tool.call({ tool: UPDATE, action: 'add', text: 'x', before: 't9' })).deny)).toContain('No task has id "t9"')
 })

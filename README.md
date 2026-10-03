@@ -1,45 +1,45 @@
 # claude-task-list
 
-A shared task checklist for Claude Code. The agent tracks its work in a pane
-beside the chat; you check tasks off, reopen them or delete them, and the agent
-is told. It is opt-in, kept per project, and survives restarts.
+A shared, ordered task list for Claude Code. It sits in a pane beside the
+chat: the agent keeps its steps there, you check off yours, and each of you is
+told what the other did. It is opt-in, kept per project, and survives restarts.
 
-```
-[ ] t3 Wire the export endpoint                      ×
-[ ] t4 Add the migration                             ×
-[x] t2 Sketch the schema               · by claude   ×
-[x] t1 Read the existing handlers      · by you      ×
-
-2/4 done [ hide ] [ focus ]
-(ctrl+x f to focus · ctrl+x t to hide)
-```
+![The agent finishes its step, you check off yours, and it carries on](docs/handoff.png)
 
 ## The problem
 
-On a long job the plan lives in the chat. The agent prints a checklist, does
-some work, prints the checklist again, and each copy scrolls away. Three things
-go wrong:
+Some jobs are a sequence of steps that you and the agent share. The agent can
+write the migration and open the pull request; you approve it. It can merge and
+watch CI; you run the migration on production. It triggers the deploy; you
+check the dashboard. That is the normal shape of work that touches production,
+cloud infrastructure or CI/CD: some steps are yours because they need your
+access or your judgement, and the order matters.
 
-- **You lose the plan.** To see what is left you scroll back, or ask, and the
-  agent spends a turn reprinting it.
-- **You cannot steer it.** The agent's own todo list is the agent's to write:
-  you can read it, but you cannot tick an item you did yourself, reopen one
-  that was not really finished, or drop one you no longer want. You have to
-  say so in prose and hope the list follows.
-- **It is not yours to switch off.** A list the agent starts whenever it likes
-  is noise on small jobs, and one it can wipe is not a record.
+In a chat, that plan has nowhere to live:
+
+- **It scrolls away.** The agent prints the plan once, then tool output buries
+  it. To find out what is next, and whose move it is, you scroll back or ask
+  the agent to summarise again.
+- **Your steps are invisible.** When you finish yours, nothing records it. You
+  have to say so in prose and hope the agent's picture of the plan follows.
+- **It is not yours to control.** A list the agent starts whenever it likes is
+  noise on small jobs, and one it can wipe is not a record.
 
 ## What this does
 
-- **One list, always in view.** Tasks live in a pane, not in the transcript.
-  The agent is told to keep progress there and stop reprinting it in chat.
-- **You can act on it.** Check a task off, uncheck it, or delete it, with the
-  mouse, the keyboard or a `/tasklist` command. The agent hears about each one,
-  mid-turn if it is working, so it can react without you typing a prompt.
+- **One plan, always in view.** The steps live in a pane, in the order they
+  should happen. The agent is told to keep progress there and stop reprinting
+  it in chat.
+- **Both of you work the same list.** The agent completes its steps; you check
+  off yours with a click, the keyboard or a `/tasklist` command. You can also
+  reopen a step or delete one.
+- **Each side hears about the other.** A step you check off reaches the agent
+  at once, mid-turn if it is working, so it can carry on without you typing a
+  prompt. Each row shows who completed it.
+- **The order can change.** The agent can insert a step ahead of another when
+  the plan changes ("snapshot the database before the production migration").
 - **You are in charge of it.** The agent may ask to use a list and may ask to
   clear it; only you can turn it on, clear it, hide it or turn it off.
-- **It records who did what.** Each task shows whether you or the agent
-  completed it, and whether it was reopened.
 - **It persists per project.** Each project root has its own list, kept across
   restarts and `--continue`.
 
@@ -65,14 +65,18 @@ Then, in Claude Code:
 /tasklist                 turn the list on
 ```
 
-It needs a Claude Code build that loads function-hook plugins; it was built
-on 2.1.288 and tried in the terminal. The pane is written to draw in the desktop
-app's Code tab too; the two chords are terminal-only.
+It needs a Claude Code build that loads function-hook plugins. That feature is
+still rolling out: if `/tasklist` is not a command after installing, your build
+does not have it yet. Built and tried on 2.1.288 and 2.1.289 in the terminal;
+the pane is written to draw in the desktop app's Code tab too, where the two
+chords do not apply.
 
 ## Using it
 
 Turn it on with `/tasklist`, or let the agent ask: it gets a tool that raises
 a dialog, and a dismissal counts as "no".
+
+![The agent asks before it uses a task list](docs/ask.png)
 
 The pane lists open tasks first, then completed ones, dim and struck through,
 the latest completed first. Each row shows the task's id (`t1`, `t2`, ...), so
@@ -85,9 +89,20 @@ when the agent mentions a task in chat you can find its row.
 | Hide or show the pane | click `[ hide ]` | `ctrl+x t` | `/tasklist` |
 | Give the pane the keyboard | click in it | `ctrl+x f` | `/tasklist focus` |
 
+With the keyboard in the pane, the arrows move between tasks and to a row's
+`×`; the footer shows the keys that work at that moment.
+
+![The pane with the keyboard: the focus ring on a row's ×, the keys listed below](docs/focused.png)
+
 While the pane is hidden, a dim `tasks 2/5` above the prompt opens it. In
 fullscreen, a task the agent adds while the pane is hidden raises a
 `[ 1 new task · open ]` button there for ten seconds.
+
+![The pane hidden: a new task raises a button above the prompt](docs/new-task.png)
+
+Shown again, the list has the new step where it belongs in the order.
+
+![The inserted step sits ahead of the production migration](docs/inserted.png)
 
 ### Keys
 
@@ -154,18 +169,19 @@ The agent gets two tools:
 
 - `task_list_request` (`reason?`) asks you, in a dialog, to turn the list on.
 - `task_update` (`action`: `add` | `complete` | `remove` | `list` |
-  `request_clear`, plus `id` / `text`) edits the list once it is on.
-  `request_clear` asks you; nothing lets the agent clear, hide or disable it.
+  `request_clear`, plus `id` / `text` / `before`) edits the list once it is
+  on. `add` with `before` inserts a step ahead of another. `request_clear`
+  asks you; nothing lets the agent clear, hide or disable it.
 
 While the list is on, a system prompt section tells the agent to track
 progress there, and to name a task by its id and a few words of its text.
 While it is off, nothing is added to the prompt. Each tool call is drawn as one
 dim line in the transcript (`Added t1: ...`).
 
-What you do to the list reaches the agent as a short notice
-(`User checked off task t3: "..."`). If the agent is idle the notice starts a
-turn; if it is working, the notice is attached to its next tool result, or
-sent when the turn ends.
+What you do to the list reaches the agent as a short notice. If the agent is
+idle the notice starts a turn, shown in the transcript as one line of yours
+(`I checked off task t3: "..."`); if it is working, the notice is attached to
+its next tool result, or sent when the turn ends.
 
 The list is stored under `task-list:<project root>` in the plugin's own store
 in your Claude Code config directory.

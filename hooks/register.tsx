@@ -322,6 +322,11 @@ const remainText = (tasks: readonly Task[]) => {
 //
 // `later` is for a `command.run` hook, where the engine refuses a submit (it
 // would wait on the turn the hook holds): the prompt goes out a moment after.
+// A notice as a prompt of the user's own: sent `asUser`, it reads in the
+// transcript as one line of theirs, without the frame the engine puts around
+// a plugin's prompt for the agent.
+const ownWords = (text: string) => text.replace(/^User /gm, 'I ').replace(/which they had marked/g, 'which I had marked')
+
 const notify = async ($: EngineInterface, text: string, later = false) => {
   if (await read($, working)) {
     await update($, pending, now => [...now, text])
@@ -330,7 +335,7 @@ const notify = async ($: EngineInterface, text: string, later = false) => {
   }
 
   // Resolves only once that turn starts.
-  const send = () => void $.prompt.submit({ text }).catch(() => {})
+  const send = () => void $.prompt.submit({ text: ownWords(text), asUser: true }).catch(() => {})
 
   if (later) {
     $.clock.after(1, send)
@@ -399,15 +404,18 @@ const removeByUser = async ($: EngineInterface, id: string, later = false) => {
   return task
 }
 
-// A notice as the transcript shows it: what happened, less what is the agent's.
+// A notice as the transcript shows it: what happened, less what is the agent's
+// to read (the count that follows, and the frame the engine puts around a
+// plugin's prompt). '' when the text holds no notice of the mod's.
 const noticeRow = (text: string) =>
   text
     .split('\n')
+    .filter(line => /^(User|I) (checked off|unchecked|deleted) task /.test(line))
     .map(line =>
       line
-        .replace(/^User /, 'You ')
+        .replace(/^(User|I) /, 'You ')
         .replace(
-          /(\.|, which (you|they) had marked complete\. It is open again\.) (\d+ task\(s\) remain\.|All tasks complete\.|The list is now empty\.)$/,
+          /(\.|, which (you|they|I) had marked complete\. It is open again\.) (\d+ task\(s\) remain\.|All tasks complete\.|The list is now empty\.)$/,
           '',
         ),
     )
@@ -530,7 +538,7 @@ export const register: Register = (on, options) => {
     await $.tool.register({
       name: 'task_update',
       description:
-        'Update the persistent task list visible to the user. Use add to create items, complete to mark done, remove to delete, list to read it back. Call this whenever your plan changes. Only the user can clear or disable the list; request_clear asks them.',
+        'Update the persistent task list visible to the user. Use add to create items, complete to mark done, remove to delete, list to read it back. The list is in the order the work should happen: add items in that order, and use before to insert one ahead of another. Call this whenever your plan changes. Only the user can clear or disable the list; request_clear asks them.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -540,6 +548,10 @@ export const register: Register = (on, options) => {
           },
           id: { type: 'string', description: 'Task id (for complete/remove)' },
           text: { type: 'string', description: 'Task text (for add)' },
+          before: {
+            type: 'string',
+            description: 'For add: the id of the task to insert this one before. Left out, it goes last.',
+          },
         },
         required: ['action'],
       },
@@ -559,8 +571,10 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  // A registered tool cannot be withdrawn, so the one that does not apply is
-  // put behind ToolSearch and says so; the other is listed in front.
+  // A registered tool cannot be withdrawn. Once the list is on, the request
+  // tool is put behind ToolSearch and says so. task_update stays in front
+  // either way, saying when it is inactive: deferred, its schema would not be
+  // loaded when the list is enabled mid-turn, and the first calls go wrong.
   on('tool.describe', { tool: 'mcp__task-list__task_list_request' }, async ($, e, next) => {
     const described = await next(e)
     const { isEnabled } = await read($, list)
@@ -576,14 +590,18 @@ export const register: Register = (on, options) => {
 
     return isEnabled
       ? { ...described, isDeferred: false }
-      : { description: 'Inactive until the user enables the task list.', isDeferred: true }
+      : {
+          ...described,
+          description: `Inactive until the user enables the task list: call task_list_request first. ${described.description}`,
+          isDeferred: false,
+        }
   })
 
   on('tool.call', { tool: 'mcp__task-list__task_list_request' }, async ($, e) => {
     const { isEnabled } = await read($, list)
 
     if (isEnabled) {
-      return { result: 'Task list is already on.\nUse task_update to add and track items.' }
+      return { result: 'Task list is already on.\nUse task_update to add and track items: one call per item, in the order the work should happen.' }
     }
 
     const reason =
@@ -606,7 +624,7 @@ export const register: Register = (on, options) => {
 
     await enable($)
 
-    return { result: 'Task list enabled.\nUse task_update to add and track items.' }
+    return { result: 'Task list enabled.\nUse task_update to add and track items: one call per item, in the order the work should happen.' }
   })
 
   on('tool.call', { tool: 'mcp__task-list__task_update' }, async ($, e) => {
@@ -625,15 +643,26 @@ export const register: Register = (on, options) => {
           return { deny: 'add needs a non-empty "text".' }
         }
 
-        const now = await write($, one => ({
-          ...one,
-          nextId: one.nextId + 1,
-          tasks: [...one.tasks, { id: `t${one.nextId}`, text, isDone: false }],
-        }))
-        const added = now.tasks[now.tasks.length - 1]
+        const before = typeof e.before === 'string' ? e.before.trim() : ''
+
+        if (before !== '' && !state.tasks.some(task => task.id === before)) {
+          return { deny: `No task has id "${before}" to insert before.\n${format(state.tasks)}` }
+        }
+
+        const added = `t${state.nextId}`
+        const now = await write($, one => {
+          const task = { id: `t${one.nextId}`, text, isDone: false }
+          const at = before === '' ? -1 : one.tasks.findIndex(other => other.id === before)
+
+          return {
+            ...one,
+            nextId: one.nextId + 1,
+            tasks: at < 0 ? [...one.tasks, task] : [...one.tasks.slice(0, at), task, ...one.tasks.slice(at)],
+          }
+        })
         await nudgeIfUnseen($, now)
 
-        return { result: `Added ${added?.id}: ${text}` }
+        return { result: `Added ${added}${before === '' ? '' : ` before ${before}`}: ${text}` }
       }
 
       case 'complete':
@@ -822,7 +851,7 @@ export const register: Register = (on, options) => {
         ...composed.sections,
         {
           id: SECTION,
-          text: 'A persistent task list is active and visible to the user in a pane. Use the task_update tool to add, complete, and remove items as you work. Do NOT print status updates or progress checklists in chat: the user sees them in the task pane. The user may check items off, uncheck ones marked complete, or delete tasks, and you are told when they do (as a message, or as a note after a tool result while you are working); an unchecked task is open again, a deleted one is no longer wanted. The pane shows the id of each task (t1, t2, ...) beside its text; when you mention a task in chat, give its id together with a few words of its text, never the id alone. You cannot clear or disable the list; when all tasks are complete, call task_update with action "request_clear" to ask the user.',
+          text: 'A persistent task list is active and visible to the user in a pane. Use the task_update tool to add, complete, and remove items as you work. Do NOT print status updates or progress checklists in chat: the user sees them in the task pane. The user may check items off, uncheck ones marked complete, or delete tasks, and you are told when they do (as a message, or as a note after a tool result while you are working); an unchecked task is open again, a deleted one is no longer wanted. The list is in the order the work should happen; insert a new step where it belongs with `before`. The pane shows the id of each task (t1, t2, ...) beside its text; when you mention a task in chat, give its id together with a few words of its text, never the id alone. You cannot clear or disable the list; when all tasks are complete, call task_update with action "request_clear" to ask the user.',
           scope: 'session',
         },
       ],
@@ -838,7 +867,7 @@ export const register: Register = (on, options) => {
     // The keys that work right now, as the person has them bound: how to move
     // (focused only), then how to leave or take the keyboard and hide the pane.
     const moves = e.props.isFocused
-      ? ['↑↓ move', bound.hasArrows && '←→ ×', `enter${bound.hasSpace ? '/space' : ''} press`]
+      ? ['↑↓ move', bound.hasArrows && '←/→ ×', `enter${bound.hasSpace ? '/space' : ''} press`]
           .filter(one => one !== false)
           .join(' · ')
       : ''
@@ -871,11 +900,10 @@ export const register: Register = (on, options) => {
                 onPress={() => toggle($, task.id)}
               />
             </Box>
-            <Box flexShrink={0} width={idColumns}>
+            <Box flexShrink={0} width={idColumns + 1}>
               <Text dimColor> {task.id}</Text>
             </Box>
             <Text dimColor={task.isDone} strikethrough={task.isDone}>
-              {' '}
               {task.text}
             </Text>
             <Box flexShrink={0}>
@@ -959,24 +987,25 @@ export const register: Register = (on, options) => {
 
     if (notices.length > 0) {
       await update($, pending, () => [])
-      void $.prompt.submit({ text: notices.join('\n') }).catch(() => {})
+      void $.prompt.submit({ text: notices.map(ownWords).join('\n'), asUser: true }).catch(() => {})
     }
 
     return result
   })
 
-  // The notice's row in the transcript: one dim line, in place of the engine's
-  // "Prompt from the task-list plugin" and the prompt under it. ctrl+o shows all.
+  // The notice's row in the transcript: one dim line, in place of the prompt
+  // as the engine frames it for the agent.
   on('ui.render', { component: 'UserMessage' }, ($, e, next) => {
-    const { origin, text, isExpanded } = e.props
+    const { origin, text } = e.props
+    const row = origin.kind === 'plugin' && origin.name === 'task-list' ? noticeRow(text) : ''
 
-    if (isExpanded || origin.kind !== 'plugin' || origin.name !== 'task-list') {
+    if (row === '') {
       return next(e)
     }
 
     const { Text } = $.ui.resolve(e)
 
-    return <Text dimColor>{noticeRow(text)}</Text>
+    return <Text dimColor>{row}</Text>
   })
 
   // The ring's moves, the person's redirected by `landing`; where it ends up
