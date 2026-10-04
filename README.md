@@ -4,7 +4,7 @@ A shared, ordered task list for Claude Code. It sits in a pane beside the
 chat: the agent keeps its steps there, you check off yours, and each of you is
 told what the other did. It is opt-in, kept per project, and survives restarts.
 
-![The agent finishes its step, you check off yours, and it carries on](docs/handoff.png)
+![The agent finishes its step, you tick yours and say go, and it carries on from the list](docs/handoff.png)
 
 ## The problem
 
@@ -33,9 +33,12 @@ In a chat, that plan has nowhere to live:
 - **Both of you work the same list.** The agent completes its steps; you check
   off yours with a click, the keyboard or a `/tasklist` command. You can also
   reopen a step or delete one.
-- **Each side hears about the other.** A step you check off reaches the agent
-  at once, mid-turn if it is working, so it can carry on without you typing a
-  prompt. Each row shows who completed it.
+- **Each side hears about the other.** What you tick, reopen or delete is
+  passed to the agent quietly, with its next tool call or your next message,
+  so the chat is not filled with notices. Each row shows who completed it.
+  Turn on `autoContinue` and ticking a step makes the agent carry on at once.
+- **Readable steps.** Task text is drawn as markdown, so a command, a branch or
+  a file name can be in `code` and the important word in **bold**.
 - **The order can change.** The agent can insert a step ahead of another, or
   move an existing one, when the plan changes ("snapshot the database before
   the production migration").
@@ -172,6 +175,7 @@ Set in `/config`, or under `pluginConfigs` in `settings.json`:
 | Setting | Default | Effect |
 |---|---|---|
 | `paneWidth` | `0` | Columns the pane asks for when docked beside the transcript; `0` leaves it to Claude Code. A width you drag the pane to wins. |
+| `autoContinue` | off | When you check off, reopen or delete a task while the agent is idle, send it a message at once so it carries on. Off, it is told quietly with your next message. |
 | `maxCompleted` | `5` | How many of the most recently completed tasks the pane lists (`+3 more done` counts the rest); `0` hides completed tasks. |
 
 ## How it works
@@ -190,10 +194,15 @@ progress there, and to name a task by its id and a few words of its text.
 While it is off, nothing is added to the prompt. Each tool call is drawn as one
 dim line in the transcript (`Added t1: ...`).
 
-What you do to the list reaches the agent as a short notice. If the agent is
-idle the notice starts a turn, shown in the transcript as one line of yours
-(`I checked off task t3: "..."`); if it is working, the notice is attached to
-its next tool result, or sent when the turn ends.
+What you do to the list reaches the agent as a short note
+(`User checked off task t3: "..."`). By default it is quiet: the note is
+attached to the agent's next tool result if it is working, or to your next
+prompt if it is idle, and nothing is added to the transcript. With
+`autoContinue` on, an idle agent is sent the note as a prompt at once, shown
+as one line of yours (`I checked off task t3: "..."`), so it carries on.
+
+Task text is drawn as markdown while a task is open, and plain and struck
+through once it is done.
 
 The list is stored under `task-list:<project root>` in the plugin's own store
 in your Claude Code config directory.

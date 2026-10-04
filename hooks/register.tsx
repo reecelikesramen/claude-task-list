@@ -6,7 +6,7 @@ import type { Chords, Task, TaskList } from '../types'
 const PANE = 'task-list'
 const PROMPT_SECTION = 'env_info_simple'
 const GUIDE =
-  'A persistent task list is active and visible to the user in a pane. Use the task_update tool to add, complete, and remove items as you work. Do NOT print status updates or progress checklists in chat: the user sees them in the task pane. The user may check items off, uncheck ones marked complete, or delete tasks, and you are told when they do (as a message, or as a note after a tool result while you are working); an unchecked task is open again, a deleted one is no longer wanted. The list is in the order the work should happen; insert a new step where it belongs with `before`, and reorder with the move action. The pane shows the id of each task (t1, t2, ...) beside its text; when you mention a task in chat, give its id together with a few words of its text, never the id alone. You cannot clear or disable the list; when all tasks are complete, call task_update with action "request_clear" to ask the user.'
+  'A persistent task list is active and visible to the user in a pane. Use the task_update tool to add, complete, and remove items as you work. Do NOT print status updates or progress checklists in chat: the user sees them in the task pane. The user may check items off, uncheck ones marked complete, or delete tasks, and you are told when they do (as a note with their next message or after a tool result, or as a message of its own); an unchecked task is open again, a deleted one is no longer wanted. The list is in the order the work should happen; insert a new step where it belongs with `before`, and reorder with the move action. Task text may use inline markdown (**bold**, _italic_, `code`) where it helps, such as a command or a file name in code. The pane shows the id of each task (t1, t2, ...) beside its text; when you mention a task in chat, give its id together with a few words of its text, never the id alone. You cannot clear or disable the list; when all tasks are complete, call task_update with action "request_clear" to ask the user.'
 const REQUEST = 'mcp__task-list__task_list_request'
 const UPDATE = 'mcp__task-list__task_update'
 const NUDGE_MS = 10_000
@@ -38,6 +38,7 @@ const KEYS: Readonly<Record<string, Readonly<Record<string, readonly [action: st
 // a change in /config reloads the module with the new values.
 let paneColumns = 0
 let maxCompleted = 5
+let autoContinue = false
 
 const list = atom({ plugin: 'task-list', key: 'list' } as const, EMPTY)
 // Tasks the agent added while the pane was out of sight; the session's alone.
@@ -264,6 +265,15 @@ const focusKey = async ($: EngineInterface, key: string) => {
   }
 }
 
+// A task's text without its inline markdown marks, for a row drawn struck
+// through: `**bold**`, `_italic_`, `` `code` `` and `[label](url)`.
+const plain = (text: string) =>
+  text
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/(\*\*|__)(.+?)\1/g, '$2')
+    .replace(/(^|[^\w*])[*_]([^*_]+)[*_](?=$|[^\w*])/g, '$1$2')
+    .replace(/`([^`]+)`/g, '$1')
+
 // The pane's rows: open tasks as listed, then the completed ones, the latest
 // first and `maxCompleted` of them at most; `more` counts the rest.
 const laidOut = (tasks: readonly Task[]) => {
@@ -328,20 +338,29 @@ const remainText = (tasks: readonly Task[]) => {
   return remaining > 0 ? `${remaining} task(s) remain.` : 'All tasks complete.'
 }
 
-// Tells the agent what the user did to the list. Idle, it is a turn of its
-// own. Mid-turn a plugin's prompt would wait for the turn to end, so it rides
-// on the next tool result instead (the `tool.call` hook), or goes out when the
-// turn ends without one.
-//
-// `later` is for a `command.run` hook, where the engine refuses a submit (it
-// would wait on the turn the hook holds): the prompt goes out a moment after.
 // A notice as a prompt of the user's own: sent `asUser`, it reads in the
 // transcript as one line of theirs, without the frame the engine puts around
 // a plugin's prompt for the agent.
 const ownWords = (text: string) => text.replace(/^User /gm, 'I ').replace(/which they had marked/g, 'which I had marked')
 
+// Tells the agent what the user did to the list.
+//
+// Quietly, by default: the notice waits in `pending` and rides on the agent's
+// next tool result (the `tool.call` hook) or the person's next prompt (the
+// `prompt.submit` hook), so a tick starts no turn and adds no prompt to the
+// transcript. Mid-turn it waits the same way whatever the setting, since a
+// plugin's prompt would only run once the turn ends.
+//
+// With the `autoContinue` setting, an idle agent is sent the notice as a
+// prompt at once, so it carries on. `later` is for a `command.run` hook, where
+// the engine refuses a submit (it would wait on the turn the hook holds): the
+// prompt goes out a moment after.
+//
+// Quiet, nothing is added to the transcript for a tick in the pane: the row
+// says who ticked it, and a line of the mod's would need a command run, which
+// the engine echoes as a prompt of the user's.
 const notify = async ($: EngineInterface, text: string, later = false) => {
-  if (await read($, working)) {
+  if (!autoContinue || (await read($, working))) {
     await update($, pending, now => [...now, text])
 
     return
@@ -352,11 +371,9 @@ const notify = async ($: EngineInterface, text: string, later = false) => {
 
   if (later) {
     $.clock.after(1, send)
-
-    return
+  } else {
+    send()
   }
-
-  send()
 }
 
 // The user's check or uncheck, from the pane or `/tasklist check|uncheck`.
@@ -526,6 +543,7 @@ const nudgeIfUnseen = async ($: EngineInterface, now: TaskList) => {
 export const register: Register = (on, options) => {
   paneColumns = typeof options.paneWidth === 'number' ? Math.max(0, Math.floor(options.paneWidth)) : 0
   maxCompleted = typeof options.maxCompleted === 'number' ? Math.max(0, Math.floor(options.maxCompleted)) : 5
+  autoContinue = options.autoContinue === true
 
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -560,7 +578,11 @@ export const register: Register = (on, options) => {
             enum: ['add', 'complete', 'remove', 'move', 'list', 'request_clear'],
           },
           id: { type: 'string', description: 'Task id (for complete/remove/move)' },
-          text: { type: 'string', description: 'Task text (for add)' },
+          text: {
+            type: 'string',
+            description:
+              'Task text (for add): one short line. Inline markdown is drawn: **bold**, _italic_, `code`, [links](https://example.com).',
+          },
           before: {
             type: 'string',
             description: 'For add and move: the id of the task to put this one before. Left out, it goes last.',
@@ -650,7 +672,7 @@ export const register: Register = (on, options) => {
     const id = typeof e.id === 'string' ? e.id.trim() : ''
     const text = typeof e.text === 'string' ? e.text.trim() : ''
 
-    switch (e.action) {
+    switch (e.action as string) {
       case 'add': {
         if (text === '') {
           return { deny: 'add needs a non-empty "text".' }
@@ -702,6 +724,10 @@ export const register: Register = (on, options) => {
 
         if (target === undefined) {
           return { deny: `No task has id "${id}".\n${format(state.tasks)}` }
+        }
+
+        if (e.action === 'complete' && target.isDone) {
+          return { result: `${id} is already complete${who(target)}: ${target.text}\n${remainText(state.tasks)}` }
         }
 
         const now = await write($, one => ({
@@ -881,7 +907,7 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Button, Text } = $.ui.resolve(e)
+    const { Box, Button, Markdown, Text } = $.ui.resolve(e)
     const { tasks } = await read($, list)
     const { rows, more } = laidOut(tasks)
     const bound = await read($, chords)
@@ -925,9 +951,13 @@ export const register: Register = (on, options) => {
             <Box flexShrink={0} width={idColumns + 1}>
               <Text dimColor> {task.id}</Text>
             </Box>
-            <Text dimColor={task.isDone} strikethrough={task.isDone}>
-              {task.text}
-            </Text>
+            {task.isDone ? (
+              <Text dimColor strikethrough>
+                {plain(task.text)}
+              </Text>
+            ) : (
+              <Markdown text={task.text} />
+            )}
             <Box flexShrink={0}>
               <Text dimColor>{mark(task)} </Text>
               <Button key={`remove:${task.id}`} plain dimColor label="×" onPress={() => removeByUser($, task.id)} />
@@ -958,9 +988,9 @@ export const register: Register = (on, options) => {
   // `task-list - task_update (MCP)(...)` row and the result block under it.
   for (const tool of [REQUEST, UPDATE]) {
     on('ui.render', { component: 'ToolUse', props: { tool } }, ($, e) => {
-      const { Text } = $.ui.resolve(e)
+      const { Markdown } = $.ui.resolve(e)
 
-      return <Text dimColor>{rowText(e.props.tool, e.props.input, e.props.output)}</Text>
+      return <Markdown dimColor text={rowText(e.props.tool, e.props.input, e.props.output)} />
     })
 
     on('ui.render', { component: 'ToolResult', props: { tool } }, ($, e) => {
@@ -990,13 +1020,28 @@ export const register: Register = (on, options) => {
     return { ...result, context: [...(result.context ?? []), ...notices] }
   })
 
+  // Quiet notices also ride on the person's next prompt, as a note the agent
+  // reads with it and the transcript does not show.
+  on('prompt.submit', async ($, e, next) => {
+    const notices = await read($, pending)
+
+    if (notices.length === 0 || (e.origin.kind === 'plugin' && e.origin.name === 'task-list')) {
+      return next(e)
+    }
+
+    await update($, pending, () => [])
+
+    return next({ ...e, context: [...(e.context ?? []), ...notices] })
+  })
+
   on('turn.start', async ($, e, next) => {
     await update($, working, () => true)
 
     return next(e)
   })
 
-  // A turn that ended with no tool call after the notice: it goes as a prompt.
+  // With `autoContinue`, a turn that ended with no tool call after the notice
+  // sends it as a prompt; quietly, it waits for the next prompt or tool call.
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
 
@@ -1005,7 +1050,7 @@ export const register: Register = (on, options) => {
     }
 
     await update($, working, () => false)
-    const notices = await read($, pending)
+    const notices = autoContinue ? await read($, pending) : []
 
     if (notices.length > 0) {
       await update($, pending, () => [])
@@ -1019,6 +1064,7 @@ export const register: Register = (on, options) => {
   // as the engine frames it for the agent.
   on('ui.render', { component: 'UserMessage' }, ($, e, next) => {
     const { origin, text } = e.props
+
     const row = origin.kind === 'plugin' && origin.name === 'task-list' ? noticeRow(text) : ''
 
     if (row === '') {

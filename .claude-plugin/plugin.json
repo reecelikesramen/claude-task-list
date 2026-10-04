@@ -1,6 +1,6 @@
 {
   "name": "task-list",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Opt-in persistent task checklist: the agent asks to use it, the user approves, checks items off and alone can clear or disable it.",
   "author": {
     "name": "Reece Holmdahl",
@@ -22,6 +22,12 @@
       "title": "Completed tasks shown",
       "description": "How many of the most recently completed tasks the pane lists under the open ones. 0 hides completed tasks.",
       "default": 5
+    },
+    "autoContinue": {
+      "type": "boolean",
+      "title": "Continue when I change the list",
+      "description": "When you check off, reopen or delete a task while Claude is idle, send it a message at once so it carries on. Off, it is told quietly with your next message.",
+      "default": false
     }
   }
 }

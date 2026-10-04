@@ -38,6 +38,8 @@ const world = (on: On, answer: string, kept: Readonly<Record<string, unknown>> =
   on('session.root', () => ({ value: '/proj' }))
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
+  // A prompt reaching the engine: its text, and the notes riding on it.
+  const prompts: { text: string; context: readonly string[] }[] = []
   on('tool.register', (_$, e) => ({ value: { tool: `mcp__task-list__${e.name}` } }))
   on('ui.open', (_$, e) => {
     focused.push(e.focus)
@@ -88,13 +90,14 @@ const world = (on: On, answer: string, kept: Readonly<Record<string, unknown>> =
   })
   on('prompt.submit', (_$, e) => {
     submitted.push(e.text)
+    prompts.push({ text: e.text, context: e.context ?? [] })
 
     return { text: e.text }
   })
 
   const clock = mock.clock(on)
 
-  return { asked, submitted, focused, widths, panes, ring, scrolled, files, clock }
+  return { asked, submitted, prompts, focused, widths, panes, ring, scrolled, files, clock }
 }
 
 const start = ($: Engine) =>
@@ -169,7 +172,7 @@ test('request_clear is the user\'s call', async ($, on) => {
   expect(listed.result).toBe('t1 [ ] one')
 })
 
-test('the pane checks a task off and tells the agent', async ($, on) => {
+test('the pane checks a task off and tells the agent', { options: { autoContinue: true } }, async ($, on) => {
   const { submitted } = world(on, 'Allow')
   await start($)
   await tasklist($, 'on')
@@ -237,7 +240,7 @@ test('a list kept for this project root comes back at session start', async ($, 
   expect(await promptText($)).toContain('A persistent task list is active')
 })
 
-test('unchecking what the agent completed tells the agent, and the list says who', async ($, on) => {
+test('unchecking what the agent completed tells the agent, and the list says who', { options: { autoContinue: true } }, async ($, on) => {
   const { submitted } = world(on, 'Allow')
   await start($)
   await tasklist($, 'on')
@@ -306,8 +309,8 @@ test('the agent\'s calls draw as one dim line and no result block', async ($, on
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...row, surface })
 
-    expect(await ui.drawn()).toMatchObject({ type: 'Text', props: { dimColor: true } })
-    expect(await ui.find({ type: 'Text', text: 'Completed t1: one' })).toBeDefined()
+    expect(await ui.drawn()).toMatchObject({ type: 'Markdown', props: { dimColor: true } })
+    expect(await ui.find({ type: 'Markdown', text: 'Completed t1: one' })).toBeDefined()
     await ui.unmount()
 
     const result = await $.ui.mount({
@@ -371,7 +374,7 @@ test('a task added while the pane is hidden raises a chip, fullscreen only', asy
   await full.unmount()
 })
 
-test('the user deletes a task from the pane or by command, and the agent is told', async ($, on) => {
+test('the user deletes a task from the pane or by command, and the agent is told', { options: { autoContinue: true } }, async ($, on) => {
   const { submitted, clock } = world(on, 'Allow')
   await start($)
   await tasklist($, 'on')
@@ -401,7 +404,7 @@ test('the user deletes a task from the pane or by command, and the agent is told
   expect((await $.tool.call({ tool: UPDATE, action: 'list' })).result).toBe('t3 [ ] three (reopened by user)')
 })
 
-test('mid-turn, what the user did rides on the next tool result, else on the turn\'s end', async ($, on) => {
+test('mid-turn, what the user did rides on the next tool result, else on the turn\'s end', { options: { autoContinue: true } }, async ($, on) => {
   const { submitted, clock } = world(on, 'Allow')
   await start($)
   await tasklist($, 'on')
@@ -531,7 +534,7 @@ test('open tasks come first; completed ones follow, struck through, the latest f
   const boxes = (await ui.findAll({ type: 'Button' })).map(box => String(box.props.key))
   expect(boxes.filter(key => key.startsWith('task:'))).toEqual(['task:t3', 'task:t2', 'task:t1'])
   expect((await ui.find({ type: 'Text', text: /two/ }))?.props.strikethrough).toBe(true)
-  expect((await ui.find({ type: 'Text', text: /three/ }))?.props.strikethrough).toBe(false)
+  expect(await ui.find({ type: 'Markdown', text: 'three' })).toBeDefined()
   await ui.unmount()
   // The agent still reads the list in the order it was written.
   expect(String((await $.tool.call({ tool: UPDATE, action: 'list' })).result).split('\n')[0]).toMatch(/^t1 \[x\]/)
@@ -642,4 +645,36 @@ test('move reorders an existing task', async ($, on) => {
   expect((await $.tool.call({ tool: UPDATE, action: 'move', id: 't1' })).result).toBe('Moved t1 to the end: one')
   expect((await $.tool.call({ tool: UPDATE, action: 'list' })).result).toBe('t3 [ ] three\nt2 [ ] two\nt1 [ ] one')
   expect(String((await $.tool.call({ tool: UPDATE, action: 'move', id: 't9' })).deny)).toContain('move needs')
+})
+
+test('quietly by default: a tick starts no turn and rides on the next prompt', async ($, on) => {
+  const { submitted, prompts } = world(on, 'Allow')
+  await start($)
+  await tasklist($, 'on')
+  await $.tool.call({ tool: UPDATE, action: 'add', text: 'one' })
+  await $.tool.call({ tool: UPDATE, action: 'add', text: 'two' })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'task:t1' })
+  await ui.unmount()
+  expect(submitted).toEqual([])
+
+  await $.prompt.submit({ text: 'what next?', origin: { kind: 'composer' }, wait: false })
+  expect(prompts.at(-1)).toEqual({ text: 'what next?', context: ['User checked off task t1: "one". 1 task(s) remain.'] })
+  await $.prompt.submit({ text: 'and then?', origin: { kind: 'composer' }, wait: false })
+  expect(prompts.at(-1)?.context).toEqual([])
+})
+
+test('task text is drawn as markdown while open, plain and struck through once done', async ($, on) => {
+  world(on, 'Allow')
+  await start($)
+  await tasklist($, 'on')
+  await $.tool.call({ tool: UPDATE, action: 'add', text: 'Run `npm test` on **main**' })
+  await $.tool.call({ tool: UPDATE, action: 'add', text: 'Edit _README_' })
+  await $.tool.call({ tool: UPDATE, action: 'complete', id: 't2' })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Markdown', text: 'Run `npm test` on **main**' })).toBeDefined()
+  expect((await ui.find({ type: 'Text', text: 'Edit README' }))?.props.strikethrough).toBe(true)
+  await ui.unmount()
 })
