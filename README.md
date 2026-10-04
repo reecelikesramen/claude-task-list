@@ -225,6 +225,19 @@ through once it is done.
 The list is stored under `task-list:<project root>` in the plugin's own store
 in your Claude Code config directory.
 
+## Versions
+
+`/plugin install` gives you the version on `main`, and
+`claude plugin update task-list@task-list` moves you to the newest (after
+`claude plugin marketplace update task-list`). Every release is tagged, so a
+specific one can be pinned by adding the marketplace with the tag:
+
+```sh
+claude plugin marketplace add 'reecelikesramen/claude-task-list#v0.2.4'
+```
+
+See [CHANGELOG.md](CHANGELOG.md) for what changed.
+
 ## Developing
 
 ```sh
@@ -234,3 +247,8 @@ claude --plugin-dir .      # load it in a session; edits reload on save
 claude plugin validate .
 claude plugin test .
 ```
+
+CI runs the same two checks on every push and pull request. To release: bump
+`version` in `.claude-plugin/plugin.json`, add the entry to `CHANGELOG.md`,
+merge to `main`, then tag the commit `vX.Y.Z` and push the tag. The tag
+publishes a GitHub release and fails if it does not match `plugin.json`.
