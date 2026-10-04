@@ -923,9 +923,11 @@ export const register: Register = (on, options) => {
     const { rows, more } = laidOut(tasks)
     const bound = await read($, chords)
     const done = tasks.filter(task => task.isDone).length
-    // The keyboard is the terminal's: its focus button and its key hints. A
-    // desktop draws real buttons a pointer presses, and gets neither. (Check
-    // glyphs for its checkboxes were tried: the desktop app drew no pane.)
+    // The keyboard is the terminal's: its focus button, its key hints and its
+    // bracket checkboxes. A desktop draws real buttons a pointer presses, so
+    // it gets box glyphs and none of the rest. The pair is ☐ / ☒, as Claude
+    // Code's own todo list draws them: both are text-only, so they come from
+    // one font at one size (☑ has an emoji form and falls back to a larger one).
     const isTerminal = e.surface === 'terminal'
     // The keys that work right now, as the person has them bound: how to move
     // (focused only), then how to leave or take the keyboard and hide the pane.
@@ -957,7 +959,7 @@ export const register: Register = (on, options) => {
               <Button
                 key={`task:${task.id}`}
                 plain
-                label={task.isDone ? '[x]' : '[ ]'}
+                label={isTerminal ? (task.isDone ? '[x]' : '[ ]') : task.isDone ? '☒' : '☐'}
                 dimColor={task.isDone}
                 {...(task.id === first && { autoFocus: true })}
                 onPress={() => toggle($, task.id)}
