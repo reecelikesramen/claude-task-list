@@ -194,12 +194,11 @@ test('the pane checks a task off and tells the agent', { options: { autoContinue
     expect(await ui.find({ key: 'hide' })).toBeDefined()
 
     // The keyboard is the terminal's: with no keys bound its hint says how to
-    // get them. A desktop has neither the hint nor the focus button, and a
-    // check glyph for a checkbox.
+    // get them. A desktop has neither the hint nor the focus button.
     const isTerminal = surface === 'terminal'
     expect((await ui.find({ type: 'Text', text: '(/tasklist keys install for hotkeys)' })) !== undefined).toBe(isTerminal)
     expect((await ui.find({ key: 'focus' })) !== undefined).toBe(isTerminal)
-    expect((await ui.find({ key: 'task:t1' }))?.props.label).toBe(isTerminal ? '[ ]' : '☐')
+    expect((await ui.find({ key: 'task:t1' }))?.props.label).toBe('[ ]')
     await ui.unmount()
   }
 

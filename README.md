@@ -95,9 +95,8 @@ time:
   `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` in its environment (needed on Linux at
   the time of writing, not on macOS).
 - `/tasklist` works when typed but is not listed in the slash-command menu.
-- The pane is pointer-driven there: checkboxes are drawn as ☐ / ☑, and the
-  focus mode, keyboard navigation, key hints and the two chords are
-  terminal-only.
+- The pane is pointer-driven there: the focus mode, keyboard navigation, key
+  hints and the two chords are terminal-only.
 
 ## Using it
 
