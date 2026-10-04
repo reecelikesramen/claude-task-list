@@ -356,12 +356,22 @@ const ownWords = (text: string) => text.replace(/^User /gm, 'I ').replace(/which
 // the engine refuses a submit (it would wait on the turn the hook holds): the
 // prompt goes out a moment after.
 //
-// Quiet, nothing is added to the transcript for a tick in the pane: the row
-// says who ticked it, and a line of the mod's would need a command run, which
-// the engine echoes as a prompt of the user's.
+// Quiet, nothing is added to the transcript for a tick in the pane: a line of
+// the mod's would need a command run, which the engine echoes as a prompt of
+// the user's. A toast confirms it instead.
 const notify = async ($: EngineInterface, text: string, later = false) => {
-  if (!autoContinue || (await read($, working))) {
+  const isWorking = await read($, working)
+
+  if (!autoContinue || isWorking) {
     await update($, pending, now => [...now, text])
+
+    // From the pane nothing else says the change registered (a typed command
+    // prints its own row), so a toast does, and says when the agent hears.
+    if (!later) {
+      const [, did = '', id = ''] = /^User (checked off|unchecked|deleted) task (t\d+)/.exec(text) ?? []
+      const verb = did === 'checked off' ? 'checked' : did === 'unchecked' ? 'reopened' : 'deleted'
+      $.ui.toast(`${id} ${verb} · Claude sees it ${isWorking ? 'at its next step' : 'with your next message'}`)
+    }
 
     return
   }
@@ -912,6 +922,10 @@ export const register: Register = (on, options) => {
     const { rows, more } = laidOut(tasks)
     const bound = await read($, chords)
     const done = tasks.filter(task => task.isDone).length
+    // The keyboard is the terminal's: its focus button, its key hints and its
+    // bracket checkboxes. A desktop draws real buttons a pointer presses, so
+    // it gets a check glyph and none of the rest.
+    const isTerminal = e.surface === 'terminal'
     // The keys that work right now, as the person has them bound: how to move
     // (focused only), then how to leave or take the keyboard and hide the pane.
     const moves = e.props.isFocused
@@ -942,7 +956,7 @@ export const register: Register = (on, options) => {
               <Button
                 key={`task:${task.id}`}
                 plain
-                label={task.isDone ? '[x]' : '[ ]'}
+                label={isTerminal ? (task.isDone ? '[x]' : '[ ]') : task.isDone ? '☑' : '☐'}
                 dimColor={task.isDone}
                 {...(task.id === first && { autoFocus: true })}
                 onPress={() => toggle($, task.id)}
@@ -970,16 +984,18 @@ export const register: Register = (on, options) => {
             {done}/{tasks.length} done{' '}
           </Text>
           <Button key="hide" label="hide" action={TOGGLE_ACTION} onPress={() => hide($)} />
-          <Text> </Text>
-          <Button
-            key="focus"
-            action={FOCUS_ACTION}
-            label={e.props.isFocused ? 'unfocus' : 'focus'}
-            onPress={() => toggleFocus($)}
-          />
+          {isTerminal && <Text> </Text>}
+          {isTerminal && (
+            <Button
+              key="focus"
+              action={FOCUS_ACTION}
+              label={e.props.isFocused ? 'unfocus' : 'focus'}
+              onPress={() => toggleFocus($)}
+            />
+          )}
         </Box>
-        {moves !== '' && <Text dimColor>({moves})</Text>}
-        <Text dimColor>({hint})</Text>
+        {isTerminal && moves !== '' && <Text dimColor>({moves})</Text>}
+        {isTerminal && <Text dimColor>({hint})</Text>}
       </Box>
     )
   })
@@ -1137,7 +1153,8 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const { isEnabled, isHidden, tasks } = await read($, list)
     const count = await read($, unseen)
-    const isChip = count > 0 && e.viewport?.isFullscreen === true
+    const isTerminal = e.surface === 'terminal'
+    const isChip = count > 0 && (!isTerminal || e.viewport?.isFullscreen === true)
 
     if (e.props.hasSurvey || (!isChip && !(isEnabled && isHidden))) {
       return next(e)
@@ -1146,7 +1163,7 @@ export const register: Register = (on, options) => {
     const { Box, Button, Text } = $.ui.resolve(e)
     const done = tasks.filter(task => task.isDone).length
     const bound = await read($, chords)
-    const toggleHint = bound.toggle === '' ? '' : ` (${bound.toggle})`
+    const toggleHint = !isTerminal || bound.toggle === '' ? '' : ` (${bound.toggle})`
     const focusHint = bound.focus === '' ? '' : ` (${bound.focus})`
 
     return (
@@ -1169,15 +1186,17 @@ export const register: Register = (on, options) => {
             onPress={() => show($)}
           />
         )}
-        <Text dimColor> · </Text>
-        <Button
-          key="focus-tasks"
-          plain
-          dimColor
-          action={FOCUS_ACTION}
-          label={`focus${focusHint}`}
-          onPress={() => toggleFocus($)}
-        />
+        {isTerminal && <Text dimColor> · </Text>}
+        {isTerminal && (
+          <Button
+            key="focus-tasks"
+            plain
+            dimColor
+            action={FOCUS_ACTION}
+            label={`focus${focusHint}`}
+            onPress={() => toggleFocus($)}
+          />
+        )}
       </Box>
     )
   })

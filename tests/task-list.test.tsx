@@ -31,6 +31,7 @@ const world = (on: On, answer: string, kept: Readonly<Record<string, unknown>> =
   const ring: (string | undefined)[] = []
   // The scrolls that reached the engine.
   const scrolled: number[] = []
+  const toasts: string[] = []
   // The files on disk, by path: the person's keybindings.json when a test has one.
   const files: Record<string, string> = {}
 
@@ -80,7 +81,11 @@ const world = (on: On, answer: string, kept: Readonly<Record<string, unknown>> =
     return {}
   })
   on('ui.invalidate', () => ({ value: undefined }))
-  on('ui.toast', () => ({ value: undefined }))
+  on('ui.toast', (_$, e) => {
+    toasts.push(e.text)
+
+    return { value: undefined }
+  })
   on('prompt.section', (_$, e) => ({ text: e.text }))
   on('tool.call', { tool: 'AskUserQuestion' }, (_$, e) => {
     const question = e.questions[0]?.question ?? ''
@@ -97,7 +102,7 @@ const world = (on: On, answer: string, kept: Readonly<Record<string, unknown>> =
 
   const clock = mock.clock(on)
 
-  return { asked, submitted, prompts, focused, widths, panes, ring, scrolled, files, clock }
+  return { asked, submitted, prompts, toasts, focused, widths, panes, ring, scrolled, files, clock }
 }
 
 const start = ($: Engine) =>
@@ -184,9 +189,15 @@ test('the pane checks a task off and tells the agent', { options: { autoContinue
 
     expect(await ui.find({ type: 'Text', text: /one/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /t1/ })).toBeDefined()
-    // No keys bound: the hint says how to get them.
-    expect(await ui.find({ type: 'Text', text: '(/tasklist keys install for hotkeys)' })).toBeDefined()
     expect(await ui.find({ key: 'hide' })).toBeDefined()
+
+    // The keyboard is the terminal's: with no keys bound its hint says how to
+    // get them. A desktop has neither the hint nor the focus button, and a
+    // check glyph for a checkbox.
+    const isTerminal = surface === 'terminal'
+    expect((await ui.find({ type: 'Text', text: '(/tasklist keys install for hotkeys)' })) !== undefined).toBe(isTerminal)
+    expect((await ui.find({ key: 'focus' })) !== undefined).toBe(isTerminal)
+    expect((await ui.find({ key: 'task:t1' }))?.props.label).toBe(isTerminal ? '[ ]' : '☐')
     await ui.unmount()
   }
 
@@ -648,7 +659,7 @@ test('move reorders an existing task', async ($, on) => {
 })
 
 test('quietly by default: a tick starts no turn and rides on the next prompt', async ($, on) => {
-  const { submitted, prompts } = world(on, 'Allow')
+  const { submitted, prompts, toasts } = world(on, 'Allow')
   await start($)
   await tasklist($, 'on')
   await $.tool.call({ tool: UPDATE, action: 'add', text: 'one' })
@@ -658,6 +669,7 @@ test('quietly by default: a tick starts no turn and rides on the next prompt', a
   await ui.press({ key: 'task:t1' })
   await ui.unmount()
   expect(submitted).toEqual([])
+  expect(toasts).toEqual(['t1 checked · Claude sees it with your next message'])
 
   await $.prompt.submit({ text: 'what next?', origin: { kind: 'composer' }, wait: false })
   expect(prompts.at(-1)).toEqual({ text: 'what next?', context: ['User checked off task t1: "one". 1 task(s) remain.'] })

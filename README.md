@@ -81,9 +81,22 @@ It needs Claude Code 2.1.284 or later, with function-hook plugins enabled.
 That feature is still rolling out: if `/tasklist` is not a command after
 installing, your build is too old or does not have it yet.
 
-The desktop app runs its own bundled copy of Claude Code, which can be older
-than the `claude` in your terminal; the mod loads there once that copy is
-2.1.284 or later. The two chords apply in the terminal only.
+### Desktop app
+
+Support in the desktop app's Code tab is limited for now and will improve over
+time:
+
+- The app runs its own bundled copy of Claude Code, which can be older than
+  the `claude` in your terminal; the mod loads once that copy is 2.1.284 or
+  later.
+- If nothing appears after installing, function-hook plugins are still early
+  access for your build: start the app with
+  `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` in its environment (needed on Linux at
+  the time of writing, not on macOS).
+- `/tasklist` works when typed but is not listed in the slash-command menu.
+- The pane is pointer-driven there: checkboxes are drawn as ☐ / ☑, and the
+  focus mode, keyboard navigation, key hints and the two chords are
+  terminal-only.
 
 ## Using it
 
@@ -197,7 +210,8 @@ dim line in the transcript (`Added t1: ...`).
 What you do to the list reaches the agent as a short note
 (`User checked off task t3: "..."`). By default it is quiet: the note is
 attached to the agent's next tool result if it is working, or to your next
-prompt if it is idle, and nothing is added to the transcript. With
+prompt if it is idle, and nothing is added to the transcript; a brief toast
+confirms the change and says when the agent will see it. With
 `autoContinue` on, an idle agent is sent the note as a prompt at once, shown
 as one line of yours (`I checked off task t3: "..."`), so it carries on.
 
