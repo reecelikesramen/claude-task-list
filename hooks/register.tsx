@@ -254,8 +254,15 @@ const keys = async ($: EngineInterface, install: boolean) => {
   ].join('\n')
 }
 
-const focusKey = ($: EngineInterface, key: string) =>
-  $.ui.focus({ requestId: PANE, key }).catch(() => ({}))
+// Moves the pane's focus ring, and records where it went: the mod's own
+// moves do not come back through its `ui.focus` hook.
+const focusKey = async ($: EngineInterface, key: string) => {
+  const moved = await $.ui.focus({ requestId: PANE, key }).catch(() => ({ deny: 'not moved' }))
+
+  if (moved.deny === undefined) {
+    await update($, cursor, () => key)
+  }
+}
 
 // The pane's rows: open tasks as listed, then the completed ones, the latest
 // first and `maxCompleted` of them at most; `more` counts the rest.
