@@ -51,12 +51,20 @@ One line in a terminal:
 claude plugin marketplace add reecelikesramen/claude-task-list && claude plugin install task-list@task-list
 ```
 
-Or from inside Claude Code:
+Or from inside Claude Code, as two separate commands (send the first, then
+the second; pasted together they run as one and fail):
 
 ```
 /plugin marketplace add reecelikesramen/claude-task-list
+```
+
+```
 /plugin install task-list@task-list
 ```
+
+If the first says the marketplace's source does not match an entry in your
+settings, it is already added (for example from the desktop app, by its
+`https://` URL): skip to the second command.
 
 Then, in Claude Code:
 
