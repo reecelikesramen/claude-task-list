@@ -18,15 +18,6 @@ const PANE = {
   },
 } as const
 
-const FACTS = {
-  model: 'model',
-  promptModel: 'model',
-  surfaces: ['terminal'],
-  tools: [],
-  outputStyle: null,
-  traits: [],
-} as const
-
 // The world beneath the plugin: a store in memory, a project root, a person
 // who answers every question with `answer`, and a record of what was asked.
 const world = (on: On, answer: string, kept: Readonly<Record<string, unknown>> = {}) => {
@@ -88,7 +79,7 @@ const world = (on: On, answer: string, kept: Readonly<Record<string, unknown>> =
   })
   on('ui.invalidate', () => ({ value: undefined }))
   on('ui.toast', () => ({ value: undefined }))
-  on('prompt.compose', () => ({ sections: [] }))
+  on('prompt.section', (_$, e) => ({ text: e.text }))
   on('tool.call', { tool: 'AskUserQuestion' }, (_$, e) => {
     const question = e.questions[0]?.question ?? ''
     asked.push(question)
@@ -117,8 +108,8 @@ const tasklist = ($: Engine, args: string) =>
     presentation: { isFullscreen: true, columns: 160 },
   })
 
-const sectionIds = async ($: Engine) =>
-  (await $.prompt.compose(FACTS)).sections.map(section => section.id)
+// The environment section of the system prompt, as the plugin leaves it.
+const promptText = async ($: Engine) => (await $.prompt.section({ name: 'env_info_simple', text: 'env' })).text ?? ''
 
 test('off: the tool refuses and the prompt says nothing', async ($, on) => {
   world(on, 'Allow')
@@ -127,7 +118,7 @@ test('off: the tool refuses and the prompt says nothing', async ($, on) => {
   const added = await $.tool.call({ tool: UPDATE, action: 'add', text: 'one' })
 
   expect(added.deny).toContain('not enabled')
-  expect(await sectionIds($)).not.toContain('task-list:active')
+  expect(await promptText($)).toBe('env')
 })
 
 test('the agent asks, the user declines: stays off', async ($, on) => {
@@ -139,7 +130,7 @@ test('the agent asks, the user declines: stays off', async ($, on) => {
   expect(asked).toHaveLength(1)
   expect(asked[0]).toContain('the refactor')
   expect(String(answer.result)).toContain('declined')
-  expect(await sectionIds($)).not.toContain('task-list:active')
+  expect(await promptText($)).toBe('env')
 })
 
 test('the agent asks, the user allows: tasks add, complete and remove', async ($, on) => {
@@ -147,7 +138,7 @@ test('the agent asks, the user allows: tasks add, complete and remove', async ($
   await start($)
 
   await $.tool.call({ tool: REQUEST, reason: 'the refactor' })
-  expect(await sectionIds($)).toContain('task-list:active')
+  expect(await promptText($)).toContain('A persistent task list is active')
 
   await $.tool.call({ tool: UPDATE, action: 'add', text: 'one' })
   await $.tool.call({ tool: UPDATE, action: 'add', text: 'two' })
@@ -218,7 +209,7 @@ test('/tasklist off clears the list; it comes back empty', async ($, on) => {
   const off = await tasklist($, 'off')
 
   expect(off.text).toBe('Task list disabled and cleared.')
-  expect(await sectionIds($)).not.toContain('task-list:active')
+  expect(await promptText($)).toBe('env')
 
   await tasklist($, 'on')
   const listed = await $.tool.call({ tool: UPDATE, action: 'list' })
@@ -243,7 +234,7 @@ test('a list kept for this project root comes back at session start', async ($, 
 
   expect(listed.result).toBe('t1 [ ] one')
   expect(added.result).toBe('Added t2: two')
-  expect(await sectionIds($)).toContain('task-list:active')
+  expect(await promptText($)).toContain('A persistent task list is active')
 })
 
 test('unchecking what the agent completed tells the agent, and the list says who', async ($, on) => {
@@ -274,7 +265,7 @@ test('bare /tasklist turns it on, then toggles the pane', async ($, on) => {
   expect((await tasklist($, '')).text).toBe('Task list enabled.')
   expect((await tasklist($, '')).text).toBe('Task pane hidden. The list stays active.')
   expect((await tasklist($, '')).text).toBe('Task pane shown.')
-  expect(await sectionIds($)).toContain('task-list:active')
+  expect(await promptText($)).toContain('A persistent task list is active')
 })
 
 test('/tasklist focus opens the pane with the keyboard, on the first open task', async ($, on) => {
@@ -636,4 +627,19 @@ test('add with before inserts a step where it belongs in the order', async ($, o
   expect(added.result).toBe('Added t3 before t2: snapshot')
   expect((await $.tool.call({ tool: UPDATE, action: 'list' })).result).toBe('t1 [ ] migrate\nt3 [ ] snapshot\nt2 [ ] deploy')
   expect(String((await $.tool.call({ tool: UPDATE, action: 'add', text: 'x', before: 't9' })).deny)).toContain('No task has id "t9"')
+})
+
+test('move reorders an existing task', async ($, on) => {
+  world(on, 'Allow')
+  await start($)
+  await tasklist($, 'on')
+
+  for (const text of ['one', 'two', 'three']) {
+    await $.tool.call({ tool: UPDATE, action: 'add', text })
+  }
+
+  expect((await $.tool.call({ tool: UPDATE, action: 'move', id: 't3', before: 't1' })).result).toBe('Moved t3 before t1: three')
+  expect((await $.tool.call({ tool: UPDATE, action: 'move', id: 't1' })).result).toBe('Moved t1 to the end: one')
+  expect((await $.tool.call({ tool: UPDATE, action: 'list' })).result).toBe('t3 [ ] three\nt2 [ ] two\nt1 [ ] one')
+  expect(String((await $.tool.call({ tool: UPDATE, action: 'move', id: 't9' })).deny)).toContain('move needs')
 })

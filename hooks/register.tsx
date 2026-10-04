@@ -4,7 +4,9 @@ import type { EngineInterface, Register, Timer } from 'claude-code'
 import type { Chords, Task, TaskList } from '../types'
 
 const PANE = 'task-list'
-const SECTION = 'task-list:active'
+const PROMPT_SECTION = 'env_info_simple'
+const GUIDE =
+  'A persistent task list is active and visible to the user in a pane. Use the task_update tool to add, complete, and remove items as you work. Do NOT print status updates or progress checklists in chat: the user sees them in the task pane. The user may check items off, uncheck ones marked complete, or delete tasks, and you are told when they do (as a message, or as a note after a tool result while you are working); an unchecked task is open again, a deleted one is no longer wanted. The list is in the order the work should happen; insert a new step where it belongs with `before`, and reorder with the move action. The pane shows the id of each task (t1, t2, ...) beside its text; when you mention a task in chat, give its id together with a few words of its text, never the id alone. You cannot clear or disable the list; when all tasks are complete, call task_update with action "request_clear" to ask the user.'
 const REQUEST = 'mcp__task-list__task_list_request'
 const UPDATE = 'mcp__task-list__task_update'
 const NUDGE_MS = 10_000
@@ -542,19 +544,19 @@ export const register: Register = (on, options) => {
     await $.tool.register({
       name: 'task_update',
       description:
-        'Update the persistent task list visible to the user. Use add to create items, complete to mark done, remove to delete, list to read it back. The list is in the order the work should happen: add items in that order, and use before to insert one ahead of another. Call this whenever your plan changes. Only the user can clear or disable the list; request_clear asks them.',
+        'Update the persistent task list visible to the user. Use add to create items, complete to mark done, remove to delete, move to reorder, list to read it back. The list is in the order the work should happen: add items in that order, use before to insert one ahead of another, and move (id, before) to put an existing one elsewhere. Call this whenever your plan changes. Only the user can clear or disable the list; request_clear asks them.',
       inputSchema: {
         type: 'object',
         properties: {
           action: {
             type: 'string',
-            enum: ['add', 'complete', 'remove', 'list', 'request_clear'],
+            enum: ['add', 'complete', 'remove', 'move', 'list', 'request_clear'],
           },
-          id: { type: 'string', description: 'Task id (for complete/remove)' },
+          id: { type: 'string', description: 'Task id (for complete/remove/move)' },
           text: { type: 'string', description: 'Task text (for add)' },
           before: {
             type: 'string',
-            description: 'For add: the id of the task to insert this one before. Left out, it goes last.',
+            description: 'For add and move: the id of the task to put this one before. Left out, it goes last.',
           },
         },
         required: ['action'],
@@ -669,6 +671,24 @@ export const register: Register = (on, options) => {
         return { result: `Added ${added}${before === '' ? '' : ` before ${before}`}: ${text}` }
       }
 
+      case 'move': {
+        const before = typeof e.before === 'string' ? e.before.trim() : ''
+        const target = state.tasks.find(task => task.id === id)
+
+        if (target === undefined || (before !== '' && !state.tasks.some(task => task.id === before)) || before === id) {
+          return { deny: `move needs the "id" of a task and, to put it ahead of another, that task's id as "before".\n${format(state.tasks)}` }
+        }
+
+        await write($, one => {
+          const rest = one.tasks.filter(task => task.id !== id)
+          const at = before === '' ? -1 : rest.findIndex(task => task.id === before)
+
+          return { ...one, tasks: at < 0 ? [...rest, target] : [...rest.slice(0, at), target, ...rest.slice(at)] }
+        })
+
+        return { result: `Moved ${id} ${before === '' ? 'to the end' : `before ${before}`}: ${target.text}` }
+      }
+
       case 'complete':
       case 'remove': {
         const target = state.tasks.find(task => task.id === id)
@@ -722,7 +742,7 @@ export const register: Register = (on, options) => {
       }
 
       default:
-        return { deny: 'action must be one of add, complete, remove, list, request_clear.' }
+        return { deny: 'action must be one of add, complete, remove, move, list, request_clear.' }
     }
   })
 
@@ -842,24 +862,15 @@ export const register: Register = (on, options) => {
     return closed
   })
 
-  on('prompt.compose', async ($, e, next) => {
-    const composed = await next(e)
+  // The agent's standing instructions while the list is on, appended to the
+  // environment section of the system prompt (`prompt.section` is in every
+  // build that loads hooks modules; `prompt.compose`, which could add a
+  // section of its own, is not). Off, the prompt is as the engine wrote it.
+  on('prompt.section', { name: PROMPT_SECTION }, async ($, e, next) => {
+    const section = await next(e)
     const { isEnabled } = await read($, list)
 
-    if (!isEnabled) {
-      return composed
-    }
-
-    return {
-      sections: [
-        ...composed.sections,
-        {
-          id: SECTION,
-          text: 'A persistent task list is active and visible to the user in a pane. Use the task_update tool to add, complete, and remove items as you work. Do NOT print status updates or progress checklists in chat: the user sees them in the task pane. The user may check items off, uncheck ones marked complete, or delete tasks, and you are told when they do (as a message, or as a note after a tool result while you are working); an unchecked task is open again, a deleted one is no longer wanted. The list is in the order the work should happen; insert a new step where it belongs with `before`. The pane shows the id of each task (t1, t2, ...) beside its text; when you mention a task in chat, give its id together with a few words of its text, never the id alone. You cannot clear or disable the list; when all tasks are complete, call task_update with action "request_clear" to ask the user.',
-          scope: 'session',
-        },
-      ],
-    }
+    return isEnabled && section.text !== null ? { text: `${section.text}\n\n${GUIDE}` } : section
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {

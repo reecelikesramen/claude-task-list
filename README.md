@@ -36,8 +36,9 @@ In a chat, that plan has nowhere to live:
 - **Each side hears about the other.** A step you check off reaches the agent
   at once, mid-turn if it is working, so it can carry on without you typing a
   prompt. Each row shows who completed it.
-- **The order can change.** The agent can insert a step ahead of another when
-  the plan changes ("snapshot the database before the production migration").
+- **The order can change.** The agent can insert a step ahead of another, or
+  move an existing one, when the plan changes ("snapshot the database before
+  the production migration").
 - **You are in charge of it.** The agent may ask to use a list and may ask to
   clear it; only you can turn it on, clear it, hide it or turn it off.
 - **It persists per project.** Each project root has its own list, kept across
@@ -73,11 +74,13 @@ Then, in Claude Code:
 /tasklist                 turn the list on
 ```
 
-It needs a Claude Code build that loads function-hook plugins. That feature is
-still rolling out: if `/tasklist` is not a command after installing, your build
-does not have it yet. Built and tried on 2.1.288 and 2.1.289 in the terminal;
-the pane is written to draw in the desktop app's Code tab too, where the two
-chords do not apply.
+It needs Claude Code 2.1.284 or later, with function-hook plugins enabled.
+That feature is still rolling out: if `/tasklist` is not a command after
+installing, your build is too old or does not have it yet.
+
+The desktop app runs its own bundled copy of Claude Code, which can be older
+than the `claude` in your terminal; the mod loads there once that copy is
+2.1.284 or later. The two chords apply in the terminal only.
 
 ## Using it
 
@@ -176,10 +179,11 @@ Set in `/config`, or under `pluginConfigs` in `settings.json`:
 The agent gets two tools:
 
 - `task_list_request` (`reason?`) asks you, in a dialog, to turn the list on.
-- `task_update` (`action`: `add` | `complete` | `remove` | `list` |
+- `task_update` (`action`: `add` | `complete` | `remove` | `move` | `list` |
   `request_clear`, plus `id` / `text` / `before`) edits the list once it is
-  on. `add` with `before` inserts a step ahead of another. `request_clear`
-  asks you; nothing lets the agent clear, hide or disable it.
+  on. `add` with `before` inserts a step ahead of another, and `move` puts an
+  existing one ahead of another or at the end. `request_clear` asks you;
+  nothing lets the agent clear, hide or disable it.
 
 While the list is on, a system prompt section tells the agent to track
 progress there, and to name a task by its id and a few words of its text.
