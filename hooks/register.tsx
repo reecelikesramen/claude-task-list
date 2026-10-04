@@ -245,7 +245,11 @@ const keys = async ($: EngineInterface, install: boolean) => {
   await $.fs.write(path, `${JSON.stringify(merged, null, 2)}\n`)
   await refreshChords($)
 
-  return [`Added ${missing} key binding(s) to ${path}:`, ...lines].join('\n')
+  return [
+    `Added ${missing} key binding(s) to ${path}:`,
+    ...lines,
+    'Claude Code picks the file up within a few seconds. If a key still does nothing, restart Claude Code.',
+  ].join('\n')
 }
 
 const focusKey = ($: EngineInterface, key: string) =>
