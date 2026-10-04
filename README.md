@@ -35,7 +35,8 @@ In a chat, that plan has nowhere to live:
   reopen a step or delete one.
 - **Each side hears about the other.** What you tick, reopen or delete is
   passed to the agent quietly, with its next tool call or your next message,
-  so the chat is not filled with notices. Each row shows who completed it.
+  and shows in the chat as one dim line, like the agent's own changes. Each
+  row shows who completed it.
   Turn on `autoContinue` and ticking a step makes the agent carry on at once.
 - **Readable steps.** Task text is drawn as markdown, so a command, a branch or
   a file name can be in `code` and the important word in **bold**.
@@ -210,8 +211,9 @@ dim line in the transcript (`Added t1: ...`).
 What you do to the list reaches the agent as a short note
 (`User checked off task t3: "..."`). By default it is quiet: the note is
 attached to the agent's next tool result if it is working, or to your next
-prompt if it is idle, and nothing is added to the transcript; a brief toast
-confirms the change and says when the agent will see it. With
+prompt if it is idle. The transcript gets one dim line for it
+(`task-list: You completed t3: ...`), as it does for the agent's own changes,
+and no prompt. With
 `autoContinue` on, an idle agent is sent the note as a prompt at once, shown
 as one line of yours (`I checked off task t3: "..."`), so it carries on.
 

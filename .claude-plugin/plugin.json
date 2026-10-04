@@ -1,6 +1,6 @@
 {
   "name": "task-list",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Opt-in persistent task checklist: the agent asks to use it, the user approves, checks items off and alone can clear or disable it.",
   "author": {
     "name": "Reece Holmdahl",

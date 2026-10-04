@@ -356,21 +356,16 @@ const ownWords = (text: string) => text.replace(/^User /gm, 'I ').replace(/which
 // the engine refuses a submit (it would wait on the turn the hook holds): the
 // prompt goes out a moment after.
 //
-// Quiet, nothing is added to the transcript for a tick in the pane: a line of
-// the mod's would need a command run, which the engine echoes as a prompt of
-// the user's. A toast confirms it instead.
-const notify = async ($: EngineInterface, text: string, later = false) => {
-  const isWorking = await read($, working)
-
-  if (!autoContinue || isWorking) {
+// `line` is what the transcript shows for it: one dim line, not sent to the
+// agent.
+const notify = async ($: EngineInterface, text: string, line: string, later = false) => {
+  if (!autoContinue || (await read($, working))) {
     await update($, pending, now => [...now, text])
 
-    // From the pane nothing else says the change registered (a typed command
-    // prints its own row), so a toast does, and says when the agent hears.
+    // From the pane, the transcript gets one dim line for it, as the agent's
+    // own changes do (a typed command prints its own row).
     if (!later) {
-      const [, did = '', id = ''] = /^User (checked off|unchecked|deleted) task (t\d+)/.exec(text) ?? []
-      const verb = did === 'checked off' ? 'checked' : did === 'unchecked' ? 'reopened' : 'deleted'
-      $.ui.toast(`${id} ${verb} · Claude sees it ${isWorking ? 'at its next step' : 'with your next message'}`)
+      $.ui.log(line)
     }
 
     return
@@ -415,6 +410,7 @@ const toggle = async ($: EngineInterface, id: string, later = false) => {
     task.isDone
       ? `User checked off task ${id}: "${task.text}". ${rest}`
       : `User unchecked task ${id}: "${task.text}", which ${before.changedBy === 'user' ? 'they' : 'you'} had marked complete. It is open again. ${rest}`,
+    `You ${task.isDone ? 'completed' : 'reopened'} ${id}: ${plain(task.text)}`,
     later,
   )
 
@@ -432,7 +428,12 @@ const removeByUser = async ($: EngineInterface, id: string, later = false) => {
   const before = await read($, list)
   const row = laidOut(before.tasks).rows.findIndex(one => one.id === id)
   const now = await write($, state => ({ ...state, tasks: state.tasks.filter(one => one.id !== id) }))
-  await notify($, `User deleted task ${id}: "${task.text}". ${remainText(now.tasks)}`, later)
+  await notify(
+    $,
+    `User deleted task ${id}: "${task.text}". ${remainText(now.tasks)}`,
+    `You deleted ${id}: ${plain(task.text)}`,
+    later,
+  )
 
   // Deleted from the keyboard, the ring moves to the row that took its place.
   if ((await read($, cursor)).endsWith(`:${id}`) && (await isPaneFocused($))) {

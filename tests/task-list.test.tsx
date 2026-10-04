@@ -31,7 +31,8 @@ const world = (on: On, answer: string, kept: Readonly<Record<string, unknown>> =
   const ring: (string | undefined)[] = []
   // The scrolls that reached the engine.
   const scrolled: number[] = []
-  const toasts: string[] = []
+  // The dim lines the mod put in the transcript.
+  const logged: string[] = []
   // The files on disk, by path: the person's keybindings.json when a test has one.
   const files: Record<string, string> = {}
 
@@ -81,8 +82,9 @@ const world = (on: On, answer: string, kept: Readonly<Record<string, unknown>> =
     return {}
   })
   on('ui.invalidate', () => ({ value: undefined }))
-  on('ui.toast', (_$, e) => {
-    toasts.push(e.text)
+  on('ui.toast', () => ({ value: undefined }))
+  on('ui.log', (_$, e) => {
+    logged.push(e.text)
 
     return { value: undefined }
   })
@@ -102,7 +104,7 @@ const world = (on: On, answer: string, kept: Readonly<Record<string, unknown>> =
 
   const clock = mock.clock(on)
 
-  return { asked, submitted, prompts, toasts, focused, widths, panes, ring, scrolled, files, clock }
+  return { asked, submitted, prompts, logged, focused, widths, panes, ring, scrolled, files, clock }
 }
 
 const start = ($: Engine) =>
@@ -658,8 +660,8 @@ test('move reorders an existing task', async ($, on) => {
   expect(String((await $.tool.call({ tool: UPDATE, action: 'move', id: 't9' })).deny)).toContain('move needs')
 })
 
-test('quietly by default: a tick starts no turn and rides on the next prompt', async ($, on) => {
-  const { submitted, prompts, toasts } = world(on, 'Allow')
+test('quietly by default: a tick starts no turn, logs one dim line and rides on the next prompt', async ($, on) => {
+  const { submitted, prompts, logged } = world(on, 'Allow')
   await start($)
   await tasklist($, 'on')
   await $.tool.call({ tool: UPDATE, action: 'add', text: 'one' })
@@ -669,7 +671,7 @@ test('quietly by default: a tick starts no turn and rides on the next prompt', a
   await ui.press({ key: 'task:t1' })
   await ui.unmount()
   expect(submitted).toEqual([])
-  expect(toasts).toEqual(['t1 checked · Claude sees it with your next message'])
+  expect(logged).toEqual(['You completed t1: one'])
 
   await $.prompt.submit({ text: 'what next?', origin: { kind: 'composer' }, wait: false })
   expect(prompts.at(-1)).toEqual({ text: 'what next?', context: ['User checked off task t1: "one". 1 task(s) remain.'] })
