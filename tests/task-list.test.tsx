@@ -24,6 +24,8 @@ const world = (on: On, answer: string, kept: Readonly<Record<string, unknown>> =
   const asked: string[] = []
   const submitted: string[] = []
   const focused: (true | undefined)[] = []
+  // The panes the mod closed, by id.
+  const closed: string[] = []
   // The docked width each open of the pane asked for.
   const widths: (number | undefined)[] = []
   // What `$.ui.panes()` answers, and where the pane's focus ring was put.
@@ -36,7 +38,21 @@ const world = (on: On, answer: string, kept: Readonly<Record<string, unknown>> =
   // The files on disk, by path: the person's keybindings.json when a test has one.
   const files: Record<string, string> = {}
 
-  mock.store(on, kept)
+  // The store file, shared by every session in the project root: a test
+  // plays another session by writing to it.
+  const store: Record<string, unknown> = structuredClone({ ...kept })
+  on('store.get', (_$, e) => ({ value: structuredClone(store[e.key]) }))
+  on('store.set', (_$, e) => {
+    store[e.key] = structuredClone(e.value)
+
+    return { value: undefined }
+  })
+  on('store.delete', (_$, e) => {
+    delete store[e.key]
+
+    return { value: undefined }
+  })
+  on('store.keys', () => ({ value: Object.keys(store) }))
   on('session.root', () => ({ value: '/proj' }))
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
@@ -52,7 +68,11 @@ const world = (on: On, answer: string, kept: Readonly<Record<string, unknown>> =
   on('turn.start', (_$, e) => ({ turnId: e.turnId }))
   on('turn.complete', () => ({ text: '' }))
   on('tool.call', { tool: 'Bash' }, () => ({ result: { stdout: '', stderr: '' } as never }))
-  on('ui.close', () => ({ value: undefined }))
+  on('ui.close', (_$, e) => {
+    closed.push(e.id)
+
+    return { value: undefined }
+  })
   on('ui.panes', () => ({ value: panes }))
   on('env.get', (_$, e) => ({ value: e.name === 'CLAUDE_CONFIG_DIR' ? '/cfg' : undefined }))
   on('fs.stat', (_$, e) => {
@@ -104,7 +124,7 @@ const world = (on: On, answer: string, kept: Readonly<Record<string, unknown>> =
 
   const clock = mock.clock(on)
 
-  return { asked, submitted, prompts, logged, focused, widths, panes, ring, scrolled, files, clock }
+  return { asked, submitted, prompts, logged, focused, closed, widths, panes, ring, scrolled, files, clock, store }
 }
 
 const start = ($: Engine) =>
@@ -691,4 +711,116 @@ test('task text is drawn as markdown while open, plain and struck through once d
   expect(await ui.find({ type: 'Markdown', text: 'Run `npm test` on **main**' })).toBeDefined()
   expect((await ui.find({ type: 'Text', text: 'Edit README' }))?.props.strikethrough).toBe(true)
   await ui.unmount()
+})
+
+// Another Claude Code session in the same project root rewriting the list.
+const elsewhere = (store: Record<string, unknown>, change: (kept: Record<string, unknown>) => Record<string, unknown>) => {
+  store['task-list:/proj'] = change(store['task-list:/proj'] as Record<string, unknown>)
+}
+
+const b1 = { id: 't2', text: 'b1', isDone: false }
+
+test("another session's tasks are kept when this one adds", async ($, on) => {
+  const { store } = world(on, 'Allow')
+  await start($)
+  await tasklist($, 'on')
+  await $.tool.call({ tool: UPDATE, action: 'add', text: 'a1' })
+  elsewhere(store, kept => ({ ...kept, nextId: 3, tasks: [...(kept.tasks as unknown[]), b1] }))
+
+  await $.tool.call({ tool: UPDATE, action: 'add', text: 'a2' })
+
+  expect((await $.tool.call({ tool: UPDATE, action: 'list' })).result).toBe('t1 [ ] a1\nt2 [ ] b1\nt3 [ ] a2')
+})
+
+test("a task added takes the next id after another session's", async ($, on) => {
+  const { store } = world(on, 'Allow')
+  await start($)
+  await tasklist($, 'on')
+  await $.tool.call({ tool: UPDATE, action: 'add', text: 'a1' })
+  elsewhere(store, kept => ({ ...kept, nextId: 3, tasks: [...(kept.tasks as unknown[]), b1] }))
+
+  const added = await $.tool.call({ tool: UPDATE, action: 'add', text: 'a2' })
+
+  expect(added.result).toBe('Added t3: a2')
+})
+
+test("the pane shows another session's change without this one touching the list", async ($, on) => {
+  const { clock, store } = world(on, 'Allow')
+  await start($)
+  await tasklist($, 'on')
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  elsewhere(store, kept => ({ ...kept, nextId: 3, tasks: [b1] }))
+
+  await clock.advance(2_000)
+
+  expect(await ui.find({ type: 'Text', text: / t2/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('another session turning the list off turns it off here', async ($, on) => {
+  const { clock, store } = world(on, 'Allow')
+  await start($)
+  await tasklist($, 'on')
+  delete store['task-list:/proj']
+
+  await clock.advance(2_000)
+
+  expect(await promptText($)).toBe('env')
+})
+
+test("another session hiding its pane leaves this session's shown", async ($, on) => {
+  const { clock, store } = world(on, 'Allow')
+  await start($)
+  await tasklist($, 'on')
+  elsewhere(store, kept => ({ ...kept, isHidden: true }))
+  await clock.advance(2_000)
+
+  const toggled = await tasklist($, '')
+
+  expect(toggled.text).toBe('Task pane hidden. The list stays active.')
+})
+
+test('another session turning the list off closes the pane here', async ($, on) => {
+  const { clock, closed, store } = world(on, 'Allow')
+  await start($)
+  await tasklist($, 'on')
+  delete store['task-list:/proj']
+
+  await clock.advance(2_000)
+
+  expect(closed).toEqual(['task-list'])
+})
+
+test('another session turning the list on opens the pane here', async ($, on) => {
+  const { clock, focused, store } = world(on, 'Allow')
+  await start($)
+  store['task-list:/proj'] = { isEnabled: true, isHidden: false, nextId: 1, tasks: [] }
+
+  await clock.advance(2_000)
+
+  expect(focused).toHaveLength(1)
+})
+
+test("the agent can complete a task another session just added", async ($, on) => {
+  const { store } = world(on, 'Allow')
+  await start($)
+  await tasklist($, 'on')
+  elsewhere(store, kept => ({ ...kept, nextId: 3, tasks: [b1] }))
+
+  const completed = await $.tool.call({ tool: UPDATE, action: 'complete', id: 't2' })
+
+  expect(String(completed.result)).toBe('Completed t2: b1\nAll tasks complete.')
+})
+
+test("hiding the pane keeps a task another session just added", async ($, on) => {
+  const { store } = world(on, 'Allow')
+  await start($)
+  await tasklist($, 'on')
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  elsewhere(store, kept => ({ ...kept, nextId: 3, tasks: [b1] }))
+
+  await ui.press({ key: 'hide' })
+  await ui.unmount()
+
+  expect((store['task-list:/proj'] as { tasks: unknown[] }).tasks).toEqual([b1])
 })

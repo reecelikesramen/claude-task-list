@@ -46,7 +46,8 @@ In a chat, that plan has nowhere to live:
 - **You are in charge of it.** The agent may ask to use a list and may ask to
   clear it; only you can turn it on, clear it, hide it or turn it off.
 - **It persists per project.** Each project root has its own list, kept across
-  restarts and `--continue`.
+  restarts and `--continue`, and shared by every session open in it: a task
+  one session adds shows in the other's pane within a couple of seconds.
 
 ## Install
 
@@ -223,7 +224,11 @@ Task text is drawn as markdown while a task is open, and plain and struck
 through once it is done.
 
 The list is stored under `task-list:<project root>` in the plugin's own store
-in your Claude Code config directory.
+in your Claude Code config directory. Sessions in the same project root share
+it: each change is applied to the list as stored, and an idle session re-reads
+it every two seconds. Turning the list on or off applies to all of them; hiding
+the pane hides it in that session only. Two changes made in the same instant
+can still lose one, since the store has no compare-and-set.
 
 ## Versions
 

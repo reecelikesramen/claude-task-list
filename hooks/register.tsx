@@ -10,6 +10,8 @@ const GUIDE =
 const REQUEST = 'mcp__task-list__task_list_request'
 const UPDATE = 'mcp__task-list__task_update'
 const NUDGE_MS = 10_000
+// How often an idle session looks for another session's changes to the list.
+const SYNC_MS = 2_000
 // A mod cannot add a keybinding action, so each chord borrows an engine one
 // that has no default key: the chord the person binds to it presses whichever
 // of the mod's Buttons carrying it is mounted (the pane's, or the band's).
@@ -63,10 +65,43 @@ const isTaskList = (value: unknown): value is TaskList =>
   typeof (value as TaskList).isEnabled === 'boolean' &&
   Array.isArray((value as TaskList).tasks)
 
-// Every change goes through here: $.state redraws the pane, $.store keeps it.
-const write = async ($: EngineInterface, change: (now: TaskList) => TaskList) => {
+// Brings the session's list up to the store, which every session in the
+// project root shares (the engine reads its file afresh on each `get`): the
+// tasks, their ids and whether the list is on are the project's; whether the
+// pane is hidden is the session's own.
+const sync = async ($: EngineInterface) => {
   const before = await read($, list)
-  const now = await update($, list, change)
+  const stored = await $.store.get(await storeKey($))
+  const shared = isTaskList(stored) ? stored : EMPTY
+  const now: TaskList =
+    shared.isEnabled && before.isEnabled
+      ? {
+          ...shared,
+          isHidden: before.isHidden,
+          ...(before.wantsFocus !== undefined && { wantsFocus: before.wantsFocus }),
+        }
+      : shared
+
+  if (JSON.stringify(now) === JSON.stringify(before)) {
+    return before
+  }
+
+  await update($, list, () => now)
+
+  if (before.isEnabled !== now.isEnabled) {
+    $.ui.invalidate('tool.describe')
+  }
+
+  return now
+}
+
+// Every change goes through here, applied to the store as it is now so that
+// another session's changes are kept: $.state redraws the pane, $.store keeps
+// it. The store has no compare-and-set, so a write landing between this
+// `get` and `set` is still lost.
+const write = async ($: EngineInterface, change: (now: TaskList) => TaskList) => {
+  const before = await sync($)
+  const now = await update($, list, () => change(before))
   await $.store.set(await storeKey($), now)
 
   if (before.isEnabled !== now.isEnabled) {
@@ -383,7 +418,7 @@ const notify = async ($: EngineInterface, text: string, line: string, later = fa
 
 // The user's check or uncheck, from the pane or `/tasklist check|uncheck`.
 const toggle = async ($: EngineInterface, id: string, later = false) => {
-  const before = (await read($, list)).tasks.find(one => one.id === id)
+  const before = (await sync($)).tasks.find(one => one.id === id)
   const now = await write($, state => ({
     ...state,
     tasks: state.tasks.map(task => {
@@ -419,13 +454,13 @@ const toggle = async ($: EngineInterface, id: string, later = false) => {
 
 // The user's delete, from the pane's `×` or `/tasklist remove`.
 const removeByUser = async ($: EngineInterface, id: string, later = false) => {
-  const task = (await read($, list)).tasks.find(one => one.id === id)
+  const before = await sync($)
+  const task = before.tasks.find(one => one.id === id)
 
   if (task === undefined) {
     return undefined
   }
 
-  const before = await read($, list)
   const row = laidOut(before.tasks).rows.findIndex(one => one.id === id)
   const now = await write($, state => ({ ...state, tasks: state.tasks.filter(one => one.id !== id) }))
   await notify(
@@ -536,6 +571,25 @@ const rowText = (tool: string, input: unknown, output: unknown) => {
 
 let nudge: Timer | undefined
 
+// The poll's tick: the pane follows the list being turned on or off in
+// another session.
+const refresh = async ($: EngineInterface) => {
+  const { isEnabled } = await read($, list)
+  const now = await sync($)
+
+  if (now.isEnabled === isEnabled) {
+    return
+  }
+
+  if (!now.isEnabled) {
+    nudge?.cancel()
+    await update($, unseen, () => 0)
+    await $.ui.close({ id: PANE })
+  } else if (!now.isHidden) {
+    await openPane($)
+  }
+}
+
 // Raises the "new task" chip while the pane is out of sight, for a while.
 const nudgeIfUnseen = async ($: EngineInterface, now: TaskList) => {
   const panes = await $.ui.panes()
@@ -614,6 +668,8 @@ export const register: Register = (on, options) => {
       }
     }
 
+    $.clock.every(SYNC_MS, () => void refresh($))
+
     return next(e)
   })
 
@@ -644,7 +700,7 @@ export const register: Register = (on, options) => {
   })
 
   on('tool.call', { tool: 'mcp__task-list__task_list_request' }, async ($, e) => {
-    const { isEnabled } = await read($, list)
+    const { isEnabled } = await sync($)
 
     if (isEnabled) {
       return { result: 'Task list is already on.\nUse task_update to add and track items: one call per item, in the order the work should happen.' }
@@ -674,7 +730,7 @@ export const register: Register = (on, options) => {
   })
 
   on('tool.call', { tool: 'mcp__task-list__task_update' }, async ($, e) => {
-    const state = await read($, list)
+    const state = await sync($)
 
     if (!state.isEnabled) {
       return { deny: 'The task list is not enabled. Call task_list_request to ask the user to turn it on.' }
@@ -695,7 +751,6 @@ export const register: Register = (on, options) => {
           return { deny: `No task has id "${before}" to insert before.\n${format(state.tasks)}` }
         }
 
-        const added = `t${state.nextId}`
         const now = await write($, one => {
           const task = { id: `t${one.nextId}`, text, isDone: false }
           const at = before === '' ? -1 : one.tasks.findIndex(other => other.id === before)
@@ -707,6 +762,7 @@ export const register: Register = (on, options) => {
           }
         })
         await nudgeIfUnseen($, now)
+        const added = `t${now.nextId - 1}`
 
         return { result: `Added ${added}${before === '' ? '' : ` before ${before}`}: ${text}` }
       }
@@ -791,7 +847,7 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: 'tasklist' }, async ($, e) => {
-    const state = await read($, list)
+    const state = await sync($)
     const [arg = '', given = ''] = e.args.trim().toLowerCase().split(/\s+/)
     // `7` is `t7`.
     const id = /^\d+$/.test(given) ? `t${given}` : given

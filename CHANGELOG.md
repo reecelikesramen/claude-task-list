@@ -4,6 +4,14 @@ Versions follow [semantic versioning](https://semver.org). The version users
 install is the `version` in `.claude-plugin/plugin.json` on `main`; each release
 is also tagged `vX.Y.Z`.
 
+## 0.2.5
+
+- Sessions in the same project root share one list: a change is applied to the
+  list as stored rather than the session's copy, so one session no longer
+  overwrites another's tasks, and each pane picks up the other's changes
+  within two seconds. Hiding the pane stays per session.
+  ([#2](https://github.com/reecelikesramen/claude-task-list/issues/2))
+
 ## 0.2.4
 
 - Desktop: checkboxes are drawn as ☐ / ☒.
